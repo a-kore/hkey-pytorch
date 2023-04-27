@@ -1,3 +1,4 @@
 env/
 *.pth
 logs/
+__pycache__/

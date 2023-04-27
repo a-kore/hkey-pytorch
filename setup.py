@@ -21,7 +21,7 @@ setup(
     'hierarchical keys',
     'hkey',
     'activation sparsity',
-  ],
+  ],  
   install_requires=[
     'torch>=1.6',
     'transformers>=4.0',

@@ -7,7 +7,7 @@ from torch.nn import functional as F
 from torch.nn.utils.rnn import pad_sequence, unpad_sequence
 from fast_pytorch_kmeans import KMeans
 import math
-from typing import Tuple
+from typing import Tuple, Union
 
 
 class HKLinear(nn.Module):
@@ -26,7 +26,7 @@ class HKLinear(nn.Module):
     centroids: Tensor
 
     def __init__(self, in_features: int, out_features: int, n_clusters: int, 
-                 threshold: float = 0.01, temperature: float = 0.1, bias: bool = True, 
+                 threshold: float = 0.1, temperature: float = 0.1, bias: bool = True, 
                  device=None, dtype=None) -> None:
         factory_kwargs = {'device': device, 'dtype': dtype}
         super(HKLinear, self).__init__()
@@ -61,7 +61,7 @@ class HKLinear(nn.Module):
         self.register_buffer("lengths", torch.tensor([len(i) for i in indices], device=self.weight.device))
         self.register_buffer("indices", pad_sequence(indices, batch_first=True, padding_value=-1))
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, input: Tensor, return_indices=False) -> Union[Tensor, Tuple[Tensor, Tensor, Tensor]]:
         shape = input.shape
         input = input.view(-1, input.shape[-1])
         n, _ = input.shape
@@ -82,14 +82,18 @@ class HKLinear(nn.Module):
                                                                                 self.bias[top_indices]))
         else:
             out = torch.zeros((n, self.out_features), device=input.device)
-        return out.view(*shape[:-1], -1)
+        if return_indices:
+            return out.view(*shape[:-1], -1), top_query_indices, top_indices
+        else:
+            return out.view(*shape[:-1], -1)
         
 
     def extra_repr(self) -> str:
-        return 'in_features={}, out_features={}, n_clusters={}, threshold={}'.format(
-            self.in_features, self.out_features, self.n_clusters, self.threshold
+        return 'in_features={}, out_features={}, n_clusters={}, threshold={}, temperature={}'.format(
+            self.in_features, self.out_features, self.n_clusters, self.threshold, self.temperature
         )
-    
+
+
 class HKLinear1D(nn.Module):
     """Hierarchical Key Linear Layer.
 
@@ -107,7 +111,7 @@ class HKLinear1D(nn.Module):
     centroids: Tensor
 
     def __init__(self, in_features: int, out_features: int, n_clusters: int, 
-                 threshold: float = 0.01, temperature: float = 0.1, bias: bool = True, 
+                 threshold: float = 0.1, temperature: float = 0.1, bias: bool = True, 
                  device=None, dtype=None) -> None:
         factory_kwargs = {'device': device, 'dtype': dtype}
         super(HKLinear1D, self).__init__()
@@ -142,7 +146,7 @@ class HKLinear1D(nn.Module):
         self.register_buffer("lengths", torch.tensor([len(i) for i in indices], device=self.weight.device))
         self.register_buffer("indices", pad_sequence(indices, batch_first=True, padding_value=-1))
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, input: Tensor, return_indices=False) -> Union[Tensor, Tuple[Tensor, Tensor, Tensor]]:
 
         dots = (input@self.centroids.T).divide_(self.temperature).softmax(dim=-1)
         query_indices, cluster_indices = torch.where(dots > self.threshold)
@@ -160,12 +164,15 @@ class HKLinear1D(nn.Module):
                                                                                 self.bias[top_indices]))
         else:
             out = torch.zeros((input.shape[0], self.out_features), device=input.device)
-        return out
+        if return_indices:
+            return out, top_query_indices, top_indices
+        else:
+            return out
         
 
     def extra_repr(self) -> str:
-        return 'in_features={}, out_features={}, n_clusters={}, threshold={}'.format(
-            self.in_features, self.out_features, self.n_clusters, self.threshold
+        return 'in_features={}, out_features={}, n_clusters={}, threshold={}, temperature={}'.format(
+            self.in_features, self.out_features, self.n_clusters, self.threshold, self.temperature
         )
     
 
@@ -185,7 +192,7 @@ class HKLinear2D(nn.Module):
     centroids: Tensor
 
     def __init__(self, in_features: int, out_features: int, n_clusters: int, 
-                 threshold: float = 0.01, temperature: float = 0.1, bias: bool = True, 
+                 threshold: float = 0.1, temperature: float = 0.1, bias: bool = True, 
                  device=None, dtype=None) -> None:
         factory_kwargs = {'device': device, 'dtype': dtype}
         super(HKLinear2D, self).__init__()
@@ -220,7 +227,7 @@ class HKLinear2D(nn.Module):
         self.register_buffer("lengths", torch.tensor([len(i) for i in indices], device=self.weight.device))
         self.register_buffer("indices", pad_sequence(indices, batch_first=True, padding_value=-1))
 
-    def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, input: Tensor, return_indices=False) -> Union[Tensor, Tuple[Tensor, Tensor, Tensor]]:
         dim0, dim1 = input.shape[:-1]
         input = input.view(-1, input.shape[-1])
         n, _ = input.shape
@@ -241,10 +248,53 @@ class HKLinear2D(nn.Module):
                                                                                 self.bias[top_indices]))
         else:
             out = torch.zeros((n, self.out_features), device=input.device)
-        return out.view(dim0, dim1, -1)
+        if return_indices:
+            return out.view(dim0, dim1, -1), top_query_indices, top_indices
+        else:
+            return out.view(dim0, dim1, -1)
         
 
     def extra_repr(self) -> str:
-        return 'in_features={}, out_features={}, n_clusters={}, threshold={}'.format(
-            self.in_features, self.out_features, self.n_clusters, self.threshold
+        return 'in_features={}, out_features={}, n_clusters={}, threshold={}, temperature={}'.format(
+            self.in_features, self.out_features, self.n_clusters, self.threshold, self.temperature
         )
+
+
+class HKeySearch(nn.Module):
+    """Standalone Hierarchical Key Search
+
+    Emulates the same functionality as nn.Linear, but with a hierarchical key associative memory.
+    
+    """
+
+    def __init__(self, keys, n_clusters: int, threshold: float = 0.1, 
+                 temperature: float = 0.1, bias: bool = True) -> None:
+        super(HKeySearch, self).__init__()
+        self.keys = keys
+        self.n_clusters = n_clusters
+        self.threshold = threshold
+        self.temperature = temperature
+        
+        self.init_clusters(self.keys)
+
+    def init_clusters(self) -> None:
+        with torch.no_grad():
+            km = KMeans(n_clusters=self.n_clusters)
+            pred = km.fit_predict(self.keys)
+        self.centroids = Parameter(km.centroids)
+        indices = [torch.where(pred == i)[0].flatten() for i in range(km.n_clusters)]
+        self.register_buffer("lengths", torch.tensor([len(i) for i in indices], device=self.keys.device))
+        self.register_buffer("indices", pad_sequence(indices, batch_first=True, padding_value=-1))
+
+    def forward(self, input: Tensor, return_indices=False) -> Union[Tensor, Tuple[Tensor, Tensor, Tensor]]:
+
+        dots = (input@self.centroids.T).divide_(self.temperature).softmax(dim=-1)
+        query_indices, cluster_indices = torch.where(dots > self.threshold)
+        top_query_indices = torch.unique(query_indices, dim=-1)
+        top_cluster_indices = torch.unique(cluster_indices, dim=-1)
+        top_indices = unpad_sequence(self.indices[top_cluster_indices], 
+                                                self.lengths[top_cluster_indices], 
+                                                batch_first=True)
+        return top_query_indices, top_indices
+    
+
