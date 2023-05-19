@@ -2,3 +2,4 @@ env/
 *.pth
 logs/
 __pycache__/
+scratch.ipynb

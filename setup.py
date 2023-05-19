@@ -26,6 +26,8 @@ setup(
     'torch>=1.6',
     'transformers>=4.0',
     'fast-pytorch-kmeans>=0.1.9',
+    'einops>=0.6',
+    'rpq-pytorch>=0.0.3'
   ],
   classifiers=[
     'Development Status :: 4 - Beta',
