@@ -38,8 +38,7 @@ from transformers.utils import (
 )
 from transformers.models.opt.configuration_opt import OPTConfig
 
-from hkey.nn import HKRPQLinearDropIn as HKLinear
-from tqdm import tqdm
+from hkey.nn import HKRPQLinear as HKLinear
 
 
 logger = logging.get_logger(__name__)
@@ -843,11 +842,6 @@ class OPTForCausalLM(OPTPreTrainedModel):
     def get_decoder(self):
         return self.model.decoder
 
-    def init_hkrpq_all(self) -> None:
-        for module in tqdm(self.modules()):
-            if hasattr(module, "init_hkrpq"):
-                module.init_hkrpq()
-
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
@@ -967,14 +961,6 @@ class OPTForCausalLM(OPTPreTrainedModel):
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
-
-            # get mean value of all threshold parameters from each layer and add to loss
-            thresholds = []
-            for module in self.model.modules():
-                if hasattr(module, "threshold"):
-                    thresholds.append(module.threshold)
-            threshold_mean = torch.stack(thresholds).mean()
-            loss += (1-threshold_mean) # (1 - threshold_mean) to maximize sparsity 
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -1128,14 +1114,6 @@ class OPTForSequenceClassification(OPTPreTrainedModel):
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(pooled_logits, labels)
-
-        # get mean value of all threshold parameters from each layer and add to loss
-        thresholds = []
-        for module in self.model.modules():
-            if hasattr(module, "threshold"):
-                thresholds.append(module.threshold)
-        threshold_mean = torch.stack(thresholds).mean()
-        loss += (1-threshold_mean) # (1 - threshold_mean) to maximize sparsity 
 
         if not return_dict:
             output = (pooled_logits,) + transformer_outputs[1:]

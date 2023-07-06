@@ -293,8 +293,8 @@ class OPTDecoderLayer(nn.Module):
         self.self_attn_layer_norm = nn.LayerNorm(
             self.embed_dim, elementwise_affine=config.layer_norm_elementwise_affine
         )
-        self.fc1 = HKLinear(self.embed_dim, config.ffn_dim, config.num_attention_heads, bias=config.enable_bias)
-        self.fc2 = HKLinear(config.ffn_dim, self.embed_dim, (config.ffn_dim//self.embed_dim)*config.num_attention_heads, bias=config.enable_bias)
+        self.fc1 = HKLinear(self.embed_dim, config.ffn_dim, (config.ffn_dim//self.embed_dim)*config.num_attention_heads, bias=config.enable_bias)
+        self.fc2 = HKLinear(config.ffn_dim, self.embed_dim, config.num_attention_heads, bias=config.enable_bias)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim, elementwise_affine=config.layer_norm_elementwise_affine)
 
     def forward(
@@ -345,7 +345,7 @@ class OPTDecoderLayer(nn.Module):
 
         # Fully Connected
         hidden_states_shape = hidden_states.shape
-        hidden_states = hidden_states.reshape(-1, hidden_states.size(-1))
+        # hidden_states = hidden_states.reshape(-1, hidden_states.size(-1))
         residual = hidden_states
 
         # 125m, 1.7B, ..., 175B applies layer norm BEFORE attention
@@ -555,6 +555,12 @@ class OPTDecoder(OPTPreTrainedModel):
             )
 
         return combined_attention_mask
+    
+    def create_custom_forward(self, module):
+        def custom_forward(*inputs):
+            # None for past_key_value
+            return module(*inputs, output_attentions, None)
+        return custom_forward
 
     def forward(
         self,
@@ -689,15 +695,8 @@ class OPTDecoder(OPTPreTrainedModel):
 
             if self.gradient_checkpointing and self.training:
 
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # None for past_key_value
-                        return module(*inputs, output_attentions, None)
-
-                    return custom_forward
-
                 layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(decoder_layer),
+                    self.create_custom_forward(decoder_layer),
                     hidden_states,
                     causal_attention_mask,
                     head_mask[idx] if head_mask is not None else None,
@@ -820,7 +819,7 @@ class OPTForCausalLM(OPTPreTrainedModel):
         self.model = OPTModel(config)
 
         # the lm_head weight is automatically tied to the embed tokens weight
-        self.lm_head = HKLinear(config.word_embed_proj_dim, config.vocab_size, config.num_attention_heads, bias=False)
+        self.lm_head = HKLinear(config.word_embed_proj_dim, config.vocab_size, (config.vocab_size//config.word_embed_proj_dim)*config.num_attention_heads, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -843,10 +842,15 @@ class OPTForCausalLM(OPTPreTrainedModel):
     def get_decoder(self):
         return self.model.decoder
 
-    def init_hkrpq_all(self) -> None:
+    def init_hkeys(self) -> None:
         for module in tqdm(self.modules()):
-            if hasattr(module, "init_hkrpq"):
-                module.init_hkrpq()
+            if hasattr(module, "init_hk"):
+                module.init_hk()
+
+    def jit_script(self) -> None:
+        for module in tqdm(self.modules()):
+            if isinstance(module, HKLinear):
+                module = torch.jit.script(module)
 
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
@@ -968,13 +972,13 @@ class OPTForCausalLM(OPTPreTrainedModel):
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
 
-            # get mean value of all threshold parameters from each layer and add to loss
-            thresholds = []
-            for module in self.model.modules():
-                if hasattr(module, "threshold"):
-                    thresholds.append(module.threshold)
-            threshold_mean = torch.stack(thresholds).mean()
-            loss += (1-threshold_mean) # (1 - threshold_mean) to maximize sparsity 
+            # # get mean value of all threshold parameters from each layer and add to loss
+            # thresholds = []
+            # for module in self.model.modules():
+            #     if hasattr(module, "threshold"):
+            #         thresholds.append(module.threshold)
+            # threshold_mean = torch.stack(thresholds).mean()
+            # loss += (1-threshold_mean) # (1 - threshold_mean) to maximize sparsity 
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -1130,12 +1134,12 @@ class OPTForSequenceClassification(OPTPreTrainedModel):
                 loss = loss_fct(pooled_logits, labels)
 
         # get mean value of all threshold parameters from each layer and add to loss
-        thresholds = []
-        for module in self.model.modules():
-            if hasattr(module, "threshold"):
-                thresholds.append(module.threshold)
-        threshold_mean = torch.stack(thresholds).mean()
-        loss += (1-threshold_mean) # (1 - threshold_mean) to maximize sparsity 
+        # thresholds = []
+        # for module in self.model.modules():
+        #     if hasattr(module, "threshold"):
+        #         thresholds.append(module.threshold)
+        # threshold_mean = torch.stack(thresholds).mean()
+        # loss += (1-threshold_mean) # (1 - threshold_mean) to maximize sparsity 
 
         if not return_dict:
             output = (pooled_logits,) + transformer_outputs[1:]

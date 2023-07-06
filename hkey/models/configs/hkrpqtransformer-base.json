@@ -1,0 +1,15 @@
+{
+    "vocab_size": 32000,
+    "vocab_cluster_size": 256,
+    "dim": 768,
+    "num_heads": 12,
+    "depth": 12,
+    "mlp_ratio": 4,
+    "codebook_ratio": 1,
+    "sigma": 10,
+    "threshold": 0.98,
+    "mask_token_id": 119,
+    "pad_token_id": 120,
+    "shared_codebooks": true,
+    "gradient_checkpointing": false
+}
