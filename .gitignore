@@ -1,8 +1,14 @@
 env/
 *.pth
 logs/
-**/__pycache__
-***/__pycache__
+
+
+*.log
+*.pot
+*.pyc
+ */*/*/__pycache__/
+*/*/__pycache__/
+ */__pycache__/
 scratch.ipynb
 .vscode/
 *.ipynb
